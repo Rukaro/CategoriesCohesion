@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>类目内聚度分析 API</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #1890ff;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .endpoint {
+            background: #f8f9fa;
+            border-left: 4px solid #1890ff;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .method {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+            margin-right: 10px;
+        }
+        .method.get {
+            background: #52c41a;
+            color: white;
+        }
+        .method.post {
+            background: #1890ff;
+            color: white;
+        }
+        code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            border: 1px solid #e0e0e0;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #52c41a;
+            color: white;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>类目内聚度分析 API <span class="status">运行中</span></h1>
+        <p class="subtitle">使用 SBERT 模型计算类目内聚度指标</p>
+
+        <h2>可用接口</h2>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>/api/health</strong>
+            <p>健康检查接口，用于验证服务是否正常运行</p>
+            <pre>curl http://localhost:5000/api/health</pre>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <strong>/api/calculate-cohesion</strong>
+            <p>计算类目内聚度指标</p>
+            
+            <h4>请求体：</h4>
+            <pre>{
+  "category": "水果",
+  "items": ["苹果", "香蕉", "橙子", "葡萄"],
+  "aggregation_method": "mean"  // 或 "median"
+}</pre>
+
+            <h4>响应示例：</h4>
+            <pre>{
+  "cohesion_score": 0.6599,
+  "similarities": [0.7003, 0.6058, 0.6439, 0.6898],
+  "method": "mean",
+  "category": "水果",
+  "items_count": 4
+}</pre>
+
+            <h4>使用示例：</h4>
+            <pre>curl -X POST http://localhost:5000/api/calculate-cohesion \
+  -H "Content-Type: application/json" \
+  -d '{"category":"水果","items":["苹果","香蕉"],"aggregation_method":"mean"}'</pre>
+        </div>
+
+        <h2>说明</h2>
+        <ul>
+            <li><strong>cohesion_score</strong>: 类目内聚度评分（0-1之间，越接近1表示关联性越强）</li>
+            <li><strong>similarities</strong>: 每个普通词与类目词的相似度数组</li>
+            <li><strong>aggregation_method</strong>: 聚合方法，支持 "mean"（平均值）或 "median"（中位数）</li>
+        </ul>
+
+        <h2>错误处理</h2>
+        <p>访问不存在的路径会返回 404 错误，包含可用接口列表。</p>
+    </div>
+</body>
+</html>
+

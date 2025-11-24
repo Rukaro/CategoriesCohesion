@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>类目内聚度分析</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>类目内聚度分析</h2>
+            <p class="subtitle">使用 SBERT 模型计算类目下词语的关联性</p>
+        </div>
+
+        <div class="config-section">
+            <h3>配置字段</h3>
+            <div class="form-group">
+                <label for="category-field">类目词字段：</label>
+                <select id="category-field" class="field-select">
+                    <option value="">请选择字段</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="items-field">普通词字段：</label>
+                <select id="items-field" class="field-select">
+                    <option value="">请选择字段</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="aggregation-method">聚合方法：</label>
+                <select id="aggregation-method" class="field-select">
+                    <option value="mean">平均值 (Mean)</option>
+                    <option value="median">中位数 (Median)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="action-section">
+            <button id="analyze-btn" class="btn-primary" disabled>开始分析</button>
+            <button id="refresh-btn" class="btn-secondary">刷新字段列表</button>
+        </div>
+
+        <div class="result-section" id="result-section" style="display: none;">
+            <h3>分析结果</h3>
+            <div class="result-card">
+                <div class="result-item">
+                    <span class="result-label">类目内聚度：</span>
+                    <span class="result-value" id="cohesion-score">-</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">类目词：</span>
+                    <span class="result-text" id="category-text">-</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">普通词数量：</span>
+                    <span class="result-value" id="items-count">-</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">聚合方法：</span>
+                    <span class="result-text" id="method-text">-</span>
+                </div>
+            </div>
+
+            <div class="similarity-details" id="similarity-details">
+                <h4>相似度详情</h4>
+                <div id="similarity-list"></div>
+            </div>
+        </div>
+
+        <div class="loading-section" id="loading-section" style="display: none;">
+            <div class="spinner"></div>
+            <p>正在计算中...</p>
+        </div>
+
+        <div class="error-section" id="error-section" style="display: none;">
+            <div class="error-message" id="error-message"></div>
+        </div>
+    </div>
+
+    <script>
+        // 飞书 SDK 加载
+        // 参考 text-generator 项目，使用 @lark-base-open/js-sdk
+        // 如果 SDK 未自动注入，尝试手动加载
+        
+        console.log('=== 飞书插件初始化 ===');
+        console.log('User-Agent:', navigator.userAgent);
+        console.log('URL:', window.location.href);
+        
+        // 检查 SDK 是否已存在
+        if (typeof window.bitable !== 'undefined' && window.bitable.base) {
+            console.log('✓ 飞书 SDK 已存在（自动注入）');
+        } else {
+            console.log('SDK 未自动注入，尝试手动加载...');
+            
+            // 尝试加载 SDK（使用 unpkg CDN，这是 @lark-base-open/js-sdk 的 CDN 版本）
+            // 注意：这只是一个备用方案，在飞书环境中 SDK 应该会自动注入
+            const loadSDKFromCDN = () => {
+                return new Promise((resolve, reject) => {
+                    // 尝试多个 CDN 地址
+                    const sdkUrls = [
+                        'https://unpkg.com/@lark-base-open/js-sdk@latest/dist/index.umd.js',
+                        'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk',
+                        'https://open.feishu.cn/open-apis/js-sdk'
+                    ];
+                    
+                    let currentIndex = 0;
+                    
+                    const tryLoad = (index) => {
+                        if (index >= sdkUrls.length) {
+                            console.warn('所有 SDK CDN 地址都加载失败');
+                            resolve(false);
+                            return;
+                        }
+                        
+                        const script = document.createElement('script');
+                        script.src = sdkUrls[index];
+                        script.async = true;
+                        script.crossOrigin = 'anonymous';
+                        
+                        script.onload = () => {
+                            console.log('✓ SDK 脚本加载完成:', sdkUrls[index]);
+                            // 等待 SDK 初始化
+                            setTimeout(() => {
+                                if (typeof window.bitable !== 'undefined') {
+                                    console.log('✓ SDK 初始化完成');
+                                    resolve(true);
+                                } else {
+                                    console.warn('SDK 脚本已加载但未初始化');
+                                    tryLoad(index + 1);
+                                }
+                            }, 500);
+                        };
+                        
+                        script.onerror = () => {
+                            console.warn('SDK 加载失败:', sdkUrls[index]);
+                            tryLoad(index + 1);
+                        };
+                        
+                        document.head.appendChild(script);
+                    };
+                    
+                    tryLoad(0);
+                });
+            };
+            
+            // 延迟一下，给自动注入一些时间
+            setTimeout(() => {
+                if (typeof window.bitable === 'undefined') {
+                    console.log('尝试从 CDN 加载 SDK...');
+                    loadSDKFromCDN();
+                }
+            }, 1000);
+        }
+    </script>
+    <script src="sidebar.js"></script>
+</body>
+</html>
+

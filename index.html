@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>类目内聚度分析工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 800px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .help-text {
+            font-size: 12px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        button {
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .result-section {
+            margin-top: 30px;
+            padding: 24px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            display: none;
+        }
+
+        .result-section.show {
+            display: block;
+        }
+
+        .result-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .result-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .result-table thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .result-table th {
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .result-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .result-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .result-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+
+        .category-col {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .items-col {
+            color: #666;
+            font-size: 13px;
+        }
+
+        .score-col {
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .score-mean {
+            color: #667eea;
+        }
+
+        .score-variance {
+            color: #764ba2;
+        }
+
+        .score-high {
+            color: #52c41a;
+        }
+
+        .score-medium {
+            color: #faad14;
+        }
+
+        .score-low {
+            color: #ff4d4f;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #f0f0f0;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fff5f5;
+            border: 1px solid #ffccc7;
+            color: #ff4d4f;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .api-config {
+            margin-top: 20px;
+            padding: 16px;
+            background: #f0f7ff;
+            border-radius: 8px;
+            border-left: 4px solid #1890ff;
+        }
+
+        .api-config label {
+            font-size: 12px;
+        }
+
+        .api-config input {
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>类目内聚度分析工具</h1>
+        <p class="subtitle">使用 SBERT 模型计算类目下词语的关联性</p>
+
+        <form id="analysis-form">
+            <div class="form-group">
+                <label for="data-input">数据输入：</label>
+                <textarea id="data-input" placeholder="格式：类目词:子词1,子词2,子词3&#10;例如：&#10;水果:苹果,香蕉,橙子,葡萄&#10;动物:猫,狗,鸟,鱼&#10;颜色:红色,蓝色,绿色,黄色" required></textarea>
+                <div class="help-text">每行一组数据，格式：类目词:子词1,子词2,子词3,...</div>
+            </div>
+
+            <div class="api-config">
+                <label for="api-url">API 地址：</label>
+                <input type="text" id="api-url" value="http://localhost:5000/api/calculate-cohesion" placeholder="http://localhost:5000/api/calculate-cohesion">
+                <div class="help-text">后端服务地址，默认使用 localhost:5000</div>
+            </div>
+
+            <div class="btn-group">
+                <button type="submit" class="btn-primary" id="analyze-btn">开始分析</button>
+                <button type="button" class="btn-secondary" id="clear-btn">清空</button>
+            </div>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>正在计算中，请稍候...</p>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="result-section" id="result">
+            <div class="result-title">分析结果</div>
+            <table class="result-table">
+                <thead>
+                    <tr>
+                        <th>类目词</th>
+                        <th>子词列表</th>
+                        <th>平均值 (Mean)</th>
+                        <th>方差 (Variance)</th>
+                    </tr>
+                </thead>
+                <tbody id="result-tbody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('analysis-form');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const result = document.getElementById('result');
+        const clearBtn = document.getElementById('clear-btn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            // 隐藏结果和错误
+            result.classList.remove('show');
+            error.classList.remove('show');
+            loading.classList.add('show');
+
+            // 获取输入值
+            const dataInput = document.getElementById('data-input').value.trim();
+            const apiUrl = document.getElementById('api-url').value || 'http://localhost:5000/api/calculate-cohesion';
+
+            // 解析输入数据
+            const lines = dataInput.split('\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+
+            if (lines.length === 0) {
+                showError('请输入数据，格式：类目词:子词1,子词2,子词3');
+                loading.classList.remove('show');
+                return;
+            }
+
+            // 解析每行数据
+            const dataRows = [];
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const colonIndex = line.indexOf(':');
+                if (colonIndex === -1) {
+                    showError(`第 ${i + 1} 行格式错误，应为：类目词:子词1,子词2,子词3`);
+                    loading.classList.remove('show');
+                    return;
+                }
+
+                const category = line.substring(0, colonIndex).trim();
+                const itemsText = line.substring(colonIndex + 1).trim();
+                
+                if (!category) {
+                    showError(`第 ${i + 1} 行：类目词不能为空`);
+                    loading.classList.remove('show');
+                    return;
+                }
+
+                const items = itemsText
+                    .split(/[,，]/)
+                    .map(item => item.trim())
+                    .filter(item => item.length > 0);
+
+                if (items.length === 0) {
+                    showError(`第 ${i + 1} 行：至少需要一个子词`);
+                    loading.classList.remove('show');
+                    return;
+                }
+
+                dataRows.push({ category, items, lineIndex: i + 1 });
+            }
+
+            try {
+                // 对每行数据分别计算平均值和中位数
+                const results = [];
+                
+                for (const row of dataRows) {
+                    // 计算平均值
+                    const meanResponse = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            category: row.category,
+                            items: row.items,
+                            aggregation_method: 'mean'
+                        })
+                    });
+
+                    if (!meanResponse.ok) {
+                        const errorData = await meanResponse.json();
+                        throw new Error(`第 ${row.lineIndex} 行计算平均值失败: ${errorData.error || '计算失败'}`);
+                    }
+
+                    const meanData = await meanResponse.json();
+
+                    // 计算方差
+                    const varianceResponse = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            category: row.category,
+                            items: row.items,
+                            aggregation_method: 'variance'
+                        })
+                    });
+
+                    if (!varianceResponse.ok) {
+                        const errorData = await varianceResponse.json();
+                        throw new Error(`第 ${row.lineIndex} 行计算方差失败: ${errorData.error || '计算失败'}`);
+                    }
+
+                    const varianceData = await varianceResponse.json();
+
+                    results.push({
+                        category: row.category,
+                        items: row.items,
+                        meanScore: meanData.mean_score,
+                        varianceScore: varianceData.variance
+                    });
+                }
+
+                // 显示结果
+                displayResult(results);
+
+            } catch (err) {
+                showError('计算失败: ' + err.message + '\n\n请确保后端服务正在运行：\npython server.py');
+            } finally {
+                loading.classList.remove('show');
+            }
+        });
+
+        function getScoreClass(score) {
+            if (score >= 0.8) return 'score-high';
+            if (score >= 0.6) return 'score-medium';
+            return 'score-low';
+        }
+
+        function displayResult(results) {
+            const tbody = document.getElementById('result-tbody');
+            tbody.innerHTML = '';
+
+            results.forEach(row => {
+                const tr = document.createElement('tr');
+                
+                // 类目词列
+                const categoryTd = document.createElement('td');
+                categoryTd.className = 'category-col';
+                categoryTd.textContent = row.category;
+                tr.appendChild(categoryTd);
+
+                // 子词列表列
+                const itemsTd = document.createElement('td');
+                itemsTd.className = 'items-col';
+                itemsTd.textContent = row.items.join(', ');
+                tr.appendChild(itemsTd);
+
+                // 平均值列
+                const meanTd = document.createElement('td');
+                meanTd.className = 'score-col score-mean ' + getScoreClass(row.meanScore);
+                meanTd.textContent = row.meanScore.toFixed(4);
+                tr.appendChild(meanTd);
+
+                // 方差列
+                const varianceTd = document.createElement('td');
+                varianceTd.className = 'score-col score-median ' + getScoreClass(row.varianceScore);
+                varianceTd.textContent = row.varianceScore.toFixed(4);
+                tr.appendChild(varianceTd);
+
+                tbody.appendChild(tr);
+            });
+
+            // 显示结果区域
+            result.classList.add('show');
+        }
+
+        function showError(message) {
+            error.textContent = message;
+            error.classList.add('show');
+        }
+
+        clearBtn.addEventListener('click', () => {
+            document.getElementById('data-input').value = '';
+            result.classList.remove('show');
+            error.classList.remove('show');
+        });
+    </script>
+</body>
+</html>
+

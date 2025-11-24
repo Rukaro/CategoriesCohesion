@@ -1,0 +1,23 @@
+{
+  "app_id": "cli_xxxxxxxxxxxxx",
+  "app_name": "类目内聚度分析",
+  "version": "1.0.0",
+  "description": "使用 SBERT 模型计算类目内聚度指标，评估类目下词语的关联性",
+  "type": "sidebar",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "64": "icons/icon-64.png"
+  },
+  "sidebar": {
+    "entry": "sidebar.html",
+    "title": "类目内聚度分析",
+    "width": 400
+  },
+  "permissions": [
+    "bitable:read",
+    "bitable:write"
+  ],
+  "api_version": "1.0.0"
+}
+
