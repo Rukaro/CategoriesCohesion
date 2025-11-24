@@ -16,11 +16,9 @@
   ],
   "functions": {
     "api/calculate.py": {
-      "runtime": "python3.9",
       "maxDuration": 60
     },
     "api/health.py": {
-      "runtime": "python3.9",
       "maxDuration": 10
     }
   }
