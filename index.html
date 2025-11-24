@@ -339,6 +339,7 @@
             if (!apiUrl) {
                 // 如果未指定，使用当前域名
                 const currentOrigin = window.location.origin;
+                // 尝试多个可能的 API 路径
                 apiUrl = `${currentOrigin}/api/calculate-cohesion`;
             }
 
