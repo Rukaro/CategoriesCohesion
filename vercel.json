@@ -1,15 +1,5 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/calculate.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/health.py",
-      "use": "@vercel/python"
-    }
-  ],
   "routes": [
     {
       "src": "/api/calculate-cohesion",
@@ -26,9 +16,11 @@
   ],
   "functions": {
     "api/calculate.py": {
+      "runtime": "python3.9",
       "maxDuration": 60
     },
     "api/health.py": {
+      "runtime": "python3.9",
       "maxDuration": 10
     }
   }
