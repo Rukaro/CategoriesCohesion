@@ -48,3 +48,8 @@ Thumbs.db
 .env
 .env.local
 
+# Vercel
+.vercel
+
+# 测试文件
+test_*.py

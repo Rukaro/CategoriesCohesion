@@ -280,10 +280,10 @@
                 <div class="help-text">每行一组数据，格式：类目词:子词1,子词2,子词3,...</div>
             </div>
 
-            <div class="api-config">
+            <div class="api-config" id="api-config" style="display: none;">
                 <label for="api-url">API 地址：</label>
-                <input type="text" id="api-url" value="http://localhost:5000/api/calculate-cohesion" placeholder="http://localhost:5000/api/calculate-cohesion">
-                <div class="help-text">后端服务地址，默认使用 localhost:5000</div>
+                <input type="text" id="api-url" value="" placeholder="自动检测">
+                <div class="help-text">后端服务地址（留空则自动使用当前域名）</div>
             </div>
 
             <div class="btn-group">
@@ -333,7 +333,14 @@
 
             // 获取输入值
             const dataInput = document.getElementById('data-input').value.trim();
-            const apiUrl = document.getElementById('api-url').value || 'http://localhost:5000/api/calculate-cohesion';
+            
+            // 自动检测 API 地址
+            let apiUrl = document.getElementById('api-url').value.trim();
+            if (!apiUrl) {
+                // 如果未指定，使用当前域名
+                const currentOrigin = window.location.origin;
+                apiUrl = `${currentOrigin}/api/calculate-cohesion`;
+            }
 
             // 解析输入数据
             const lines = dataInput.split('\n')
@@ -381,12 +388,12 @@
             }
 
             try {
-                // 对每行数据分别计算平均值和中位数
+                // 对每行数据分别计算平均值和方差
                 const results = [];
                 
                 for (const row of dataRows) {
-                    // 计算平均值
-                    const meanResponse = await fetch(apiUrl, {
+                    // 一次请求同时获取平均值和方差（API 会返回两者）
+                    const response = await fetch(apiUrl, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -394,42 +401,22 @@
                         body: JSON.stringify({
                             category: row.category,
                             items: row.items,
-                            aggregation_method: 'mean'
+                            aggregation_method: 'mean'  // 使用 mean，但 API 会同时返回 variance
                         })
                     });
 
-                    if (!meanResponse.ok) {
-                        const errorData = await meanResponse.json();
-                        throw new Error(`第 ${row.lineIndex} 行计算平均值失败: ${errorData.error || '计算失败'}`);
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`第 ${row.lineIndex} 行计算失败: ${errorData.error || '计算失败'}`);
                     }
 
-                    const meanData = await meanResponse.json();
-
-                    // 计算方差
-                    const varianceResponse = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            category: row.category,
-                            items: row.items,
-                            aggregation_method: 'variance'
-                        })
-                    });
-
-                    if (!varianceResponse.ok) {
-                        const errorData = await varianceResponse.json();
-                        throw new Error(`第 ${row.lineIndex} 行计算方差失败: ${errorData.error || '计算失败'}`);
-                    }
-
-                    const varianceData = await varianceResponse.json();
+                    const data = await response.json();
 
                     results.push({
                         category: row.category,
                         items: row.items,
-                        meanScore: meanData.mean_score,
-                        varianceScore: varianceData.variance
+                        meanScore: data.mean_score || data.cohesion_score,
+                        varianceScore: data.variance || 0
                     });
                 }
 
@@ -437,7 +424,15 @@
                 displayResult(results);
 
             } catch (err) {
-                showError('计算失败: ' + err.message + '\n\n请确保后端服务正在运行：\npython server.py');
+                let errorMsg = '计算失败: ' + err.message;
+                // 如果是网络错误，提供更多帮助
+                if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+                    errorMsg += '\n\n可能的原因：\n';
+                    errorMsg += '1. API 服务未运行或地址不正确\n';
+                    errorMsg += '2. 网络连接问题\n';
+                    errorMsg += '3. CORS 配置问题';
+                }
+                showError(errorMsg);
             } finally {
                 loading.classList.remove('show');
             }

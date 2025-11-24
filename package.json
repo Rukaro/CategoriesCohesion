@@ -1,0 +1,18 @@
+{
+  "name": "categories-cohesion",
+  "version": "1.0.0",
+  "description": "类目内聚度分析工具 - 使用 SBERT 模型计算类目下词语的关联性",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "keywords": [
+    "sbert",
+    "cohesion",
+    "semantic-analysis",
+    "vercel"
+  ],
+  "author": "",
+  "license": "MIT"
+}
+

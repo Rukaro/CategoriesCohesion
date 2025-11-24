@@ -1,0 +1,25 @@
+# 忽略不需要部署的文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+.venv
+*.log
+.git/
+.gitignore
+*.md
+!README.md
+test_*.py
+start_server.*
+server.py
+api_info.html
+sidebar.html
+sidebar.js
+styles.css
+manifest.json
+icons/
+
