@@ -213,6 +213,73 @@
             color: #ff4d4f;
         }
 
+        .expand-btn {
+            background: none;
+            border: none;
+            color: #667eea;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px 8px;
+            text-decoration: underline;
+        }
+
+        .expand-btn:hover {
+            color: #764ba2;
+        }
+
+        .similarity-details {
+            display: none;
+            margin-top: 8px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .similarity-details.show {
+            display: block;
+        }
+
+        .similarity-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .similarity-item:last-child {
+            border-bottom: none;
+        }
+
+        .copy-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s;
+        }
+
+        .copy-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .copy-success {
+            display: none;
+            color: #52c41a;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .copy-success.show {
+            display: block;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -300,14 +367,18 @@
         <div class="error" id="error"></div>
 
         <div class="result-section" id="result">
-            <div class="result-title">分析结果</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div class="result-title">分析结果</div>
+                <button class="copy-btn" id="copy-table-btn">复制表格</button>
+            </div>
+            <div id="copy-success" class="copy-success">✓ 表格已复制到剪贴板</div>
             <table class="result-table">
                 <thead>
                     <tr>
                         <th>类目词</th>
-                        <th>子词列表</th>
-                        <th>平均值 (Mean)</th>
-                        <th>方差 (Variance)</th>
+                        <th>子词</th>
+                        <th>关联类型</th>
+                        <th>详情</th>
                     </tr>
                 </thead>
                 <tbody id="result-tbody">
@@ -381,12 +452,12 @@
             }
 
             try {
-                // 对每行数据分别计算平均值和中位数
+                // 对每行数据分别计算
                 const results = [];
                 
                 for (const row of dataRows) {
-                    // 计算平均值
-                    const meanResponse = await fetch(apiUrl, {
+                    // 调用API计算相似度和关联类型
+                    const response = await fetch(apiUrl, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -394,42 +465,33 @@
                         body: JSON.stringify({
                             category: row.category,
                             items: row.items,
-                            aggregation_method: 'mean'
+                            aggregation_method: 'mean'  // 使用mean，但实际不需要计算平均值
                         })
                     });
 
-                    if (!meanResponse.ok) {
-                        const errorData = await meanResponse.json();
-                        throw new Error(`第 ${row.lineIndex} 行计算平均值失败: ${errorData.error || '计算失败'}`);
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`第 ${row.lineIndex} 行计算失败: ${errorData.error || '计算失败'}`);
                     }
 
-                    const meanData = await meanResponse.json();
-
-                    // 计算方差
-                    const varianceResponse = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            category: row.category,
-                            items: row.items,
-                            aggregation_method: 'variance'
-                        })
-                    });
-
-                    if (!varianceResponse.ok) {
-                        const errorData = await varianceResponse.json();
-                        throw new Error(`第 ${row.lineIndex} 行计算方差失败: ${errorData.error || '计算失败'}`);
-                    }
-
-                    const varianceData = await varianceResponse.json();
-
+                    const data = await response.json();
+                    const similarities = data.similarities || [];
+                    const relationTypes = data.relation_types || [];
+                    const items = data.items || row.items;
+                    
+                    // 获取主要的关联类型（取出现最多的类型，或第一个）
+                    const mainRelationType = relationTypes.length > 0 
+                        ? (relationTypes.filter(t => t && t !== '未知').length > 0
+                            ? relationTypes.filter(t => t && t !== '未知')[0]
+                            : relationTypes[0] || '未知')
+                        : '未知';
+                    
+                    // 每个类目词只有一行
                     results.push({
                         category: row.category,
-                        items: row.items,
-                        meanScore: meanData.mean_score,
-                        varianceScore: varianceData.variance
+                        items: items,  // 子词列表
+                        similarities: similarities,  // 关联度列表
+                        relationType: mainRelationType  // 关联类型
                     });
                 }
 
@@ -449,11 +511,18 @@
             return 'score-low';
         }
 
+        // 存储完整的相似度数据
+        let allResultsData = [];
+
         function displayResult(results) {
             const tbody = document.getElementById('result-tbody');
             tbody.innerHTML = '';
+            
+            // 保存完整数据用于复制
+            allResultsData = results;
 
-            results.forEach(row => {
+            // 每个类目词一行
+            results.forEach((row, rowIndex) => {
                 const tr = document.createElement('tr');
                 
                 // 类目词列
@@ -461,31 +530,127 @@
                 categoryTd.className = 'category-col';
                 categoryTd.textContent = row.category;
                 tr.appendChild(categoryTd);
-
+                
                 // 子词列表列
                 const itemsTd = document.createElement('td');
                 itemsTd.className = 'items-col';
                 itemsTd.textContent = row.items.join(', ');
                 tr.appendChild(itemsTd);
-
-                // 平均值列
-                const meanTd = document.createElement('td');
-                meanTd.className = 'score-col score-mean ' + getScoreClass(row.meanScore);
-                meanTd.textContent = row.meanScore.toFixed(4);
-                tr.appendChild(meanTd);
-
-                // 方差列
-                const varianceTd = document.createElement('td');
-                varianceTd.className = 'score-col score-median ' + getScoreClass(row.varianceScore);
-                varianceTd.textContent = row.varianceScore.toFixed(4);
-                tr.appendChild(varianceTd);
-
+                
+                // 关联类型列
+                const relationTypeTd = document.createElement('td');
+                relationTypeTd.className = 'relation-type-col';
+                relationTypeTd.textContent = row.relationType || '未知';
+                relationTypeTd.style.fontWeight = '600';
+                relationTypeTd.style.color = '#667eea';
+                tr.appendChild(relationTypeTd);
+                
+                // 详情列（显示所有关联度，用;分割）
+                const detailsTd = document.createElement('td');
+                detailsTd.className = 'details-col';
+                const allSimilarities = row.similarities.map(s => s.toFixed(4));
+                detailsTd.textContent = allSimilarities.join(';');
+                tr.appendChild(detailsTd);
+                
                 tbody.appendChild(tr);
             });
 
             // 显示结果区域
             result.classList.add('show');
         }
+
+        // 复制表格功能（支持多种复制方式）
+        document.getElementById('copy-table-btn').addEventListener('click', async function() {
+            if (allResultsData.length === 0) {
+                showError('没有可复制的数据');
+                return;
+            }
+
+            try {
+                // 生成表格文本（仅包含关联类型和详情，用制表符分隔，方便粘贴到Excel等）
+                let tableText = '';
+                
+                allResultsData.forEach(row => {
+                    const relationType = row.relationType || '未知';
+                    // 获取所有关联度，用;分割
+                    const details = row.similarities.map(s => s.toFixed(4)).join(';');
+                    tableText += `${relationType}\t${details}\n`;
+                });
+                
+                // 移除最后一行的换行符
+                tableText = tableText.trim();
+
+                // 尝试使用现代 Clipboard API
+                let copySuccess = false;
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    try {
+                        await navigator.clipboard.writeText(tableText);
+                        copySuccess = true;
+                    } catch (clipboardErr) {
+                        console.warn('Clipboard API 失败，尝试降级方案:', clipboardErr);
+                    }
+                }
+
+                // 如果 Clipboard API 失败，使用降级方案
+                if (!copySuccess) {
+                    // 创建临时文本区域
+                    const textArea = document.createElement('textarea');
+                    textArea.value = tableText;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    textArea.style.top = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    
+                    try {
+                        // 使用传统的 execCommand 方法
+                        const successful = document.execCommand('copy');
+                        if (successful) {
+                            copySuccess = true;
+                        } else {
+                            throw new Error('execCommand 复制失败');
+                        }
+                    } catch (execErr) {
+                        console.error('execCommand 也失败:', execErr);
+                        // 如果都失败了，显示文本让用户手动复制
+                        const textArea2 = document.createElement('textarea');
+                        textArea2.value = tableText;
+                        textArea2.style.position = 'fixed';
+                        textArea2.style.width = '80%';
+                        textArea2.style.height = '200px';
+                        textArea2.style.top = '50%';
+                        textArea2.style.left = '50%';
+                        textArea2.style.transform = 'translate(-50%, -50%)';
+                        textArea2.style.zIndex = '10000';
+                        textArea2.style.padding = '10px';
+                        textArea2.style.border = '2px solid #667eea';
+                        textArea2.style.borderRadius = '8px';
+                        document.body.appendChild(textArea2);
+                        textArea2.select();
+                        
+                        showError('自动复制失败，请手动选择并复制文本框中的内容（Ctrl+C）');
+                        setTimeout(() => {
+                            document.body.removeChild(textArea2);
+                        }, 10000);
+                        return;
+                    } finally {
+                        document.body.removeChild(textArea);
+                    }
+                }
+                
+                // 显示成功提示
+                if (copySuccess) {
+                    const successMsg = document.getElementById('copy-success');
+                    successMsg.classList.add('show');
+                    setTimeout(() => {
+                        successMsg.classList.remove('show');
+                    }, 2000);
+                }
+            } catch (err) {
+                showError('复制失败: ' + err.message);
+            }
+        });
 
         function showError(message) {
             error.textContent = message;

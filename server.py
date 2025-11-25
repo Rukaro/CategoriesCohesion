@@ -1,19 +1,21 @@
 """
 飞书边栏插件后端服务
-使用 SBERT 模型计算类目内聚度指标
+使用 NLI 模型的多关系模板匹配计算类目内聚度指标
+支持分类、场景、构成、近义词、特征、状态等多种关系类型
 """
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from sentence_transformers import SentenceTransformer
+from transformers import pipeline
 import numpy as np
-from scipy.spatial.distance import cosine
 import logging
 import os
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# 静默 transformers 警告
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)  # 允许跨域请求
@@ -32,7 +34,9 @@ def after_request(response):
         'payment=*, '
         'usb=*, '
         'clipboard-read=*, '
-        'clipboard-write=*'
+        'clipboard-write=*, '
+        'clipboard-read=(self "*"), '
+        'clipboard-write=(self "*")'
     )
     # 内容安全策略（允许飞书 SDK 和必要的资源加载）
     response.headers['Content-Security-Policy'] = (
@@ -45,25 +49,137 @@ def after_request(response):
     )
     return response
 
-# 全局变量：加载 SBERT 模型
-model = None
+# 全局变量：NLI 模型
+classifier = None
 
 def load_model():
-    """加载 SBERT 模型"""
-    global model
-    if model is None:
-        logger.info("正在加载 SBERT 模型...")
-        # 使用中文 SBERT 模型，如果网络问题可以使用其他模型
-        # 例如: 'paraphrase-multilingual-MiniLM-L12-v2' 或 'distiluse-base-multilingual-cased'
+    """加载 NLI 模型（Bart-Large-MNLI）"""
+    global classifier
+    if classifier is None:
+        logger.info("正在加载 NLI 模型...")
         try:
-            model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-            logger.info("SBERT 模型加载成功")
+            # 优先尝试从环境变量获取模型名称
+            model_name = os.getenv('NLI_MODEL_NAME', 'facebook/bart-large-mnli')
+            
+            logger.info(f"使用模型: {model_name}")
+            classifier = pipeline(
+                "zero-shot-classification",
+                model=model_name,
+                device=-1  # -1 表示使用 CPU，如果有 GPU 可以改为 0
+            )
+            logger.info("NLI 模型加载成功")
+            
         except Exception as e:
             logger.error(f"模型加载失败: {e}")
-            # 备用模型
-            model = SentenceTransformer('distiluse-base-multilingual-cased')
-            logger.info("使用备用 SBERT 模型")
-    return model
+            logger.error("请确保已安装 transformers 库，并且网络连接正常以下载模型")
+            raise
+    return classifier
+
+def calculate_complex_association(category, item):
+    """
+    使用 NLI 模型计算类目词和子词的关联度
+    两步验证机制：
+    1. 第一步：广撒网，先看有没有关系（高召回率）
+    2. 第二步：照妖镜，过滤主观评价
+    
+    Args:
+        category: 类目词
+        item: 子词
+    
+    Returns:
+        (最大相似度分数, 最佳匹配模板, 关联类型)
+    """
+    if classifier is None:
+        load_model()
+    
+    # ======================================================
+    # 第一步：快速检测关系（优化版）
+    # ======================================================
+    # 使用最精简的模板，减少计算时间
+    association_templates = [
+        ("{} is a type of {}.", "分类"),
+        ("{} is physically {}.", "特征"),
+        ("{} can be described as {}.", "状态"),
+    ]
+    
+    max_assoc_score = 0.0
+    best_sentence = ""
+    best_relation_type = "未知"
+    early_exit_threshold = 0.95  # 只有非常高的分数才提前退出
+    
+    # 双向测试：先测试正向，如果分数不高再测试反向
+    inputs = [(item, category), (category, item)]
+    
+    for subject, predicate in inputs:
+        for template_info in association_templates:
+            template, relation_type = template_info
+            try:
+                # 构造完整句子
+                placeholder_count = template.count('{}')
+                
+                if placeholder_count == 2:
+                    sentence = template.replace('{}', subject, 1).replace('{}', predicate, 1)
+                elif placeholder_count == 1:
+                    sentence = template.replace('{}', subject, 1)
+                else:
+                    continue
+                
+                # 快速检测：使用 true/false
+                res = classifier(sentence, ["true", "false"])
+                
+                if res and 'scores' in res and 'labels' in res:
+                    score = res['scores'][0]
+                    label = res['labels'][0]
+                    
+                    if label == "true" and score > max_assoc_score:
+                        max_assoc_score = score
+                        best_sentence = sentence
+                        best_relation_type = relation_type
+                        
+                        # 早期退出：只有分数非常高时才提前退出
+                        if max_assoc_score >= early_exit_threshold:
+                            break
+                        
+            except Exception as e:
+                logger.debug(f"模板计算失败 ({template}): {e}")
+                continue
+        
+        # 如果已经找到非常高的分数，跳出输入循环
+        if max_assoc_score >= early_exit_threshold:
+            break
+    
+    # ======================================================
+    # 第二步：主观性过滤（仅在分数较高时执行）
+    # ======================================================
+    # 只在分数 >= 0.7 时才进行主观性检测，避免不必要的计算
+    if max_assoc_score >= 0.7:
+        try:
+            labels = ["objective physical fact", "subjective personal opinion"]
+            res = classifier(best_sentence, labels)
+            
+            if res and 'scores' in res and 'labels' in res:
+                fact_score = res['scores'][res['labels'].index("objective physical fact")]
+                opinion_score = res['scores'][res['labels'].index("subjective personal opinion")]
+                
+                is_subjective = opinion_score > fact_score
+                
+                if is_subjective:
+                    # 惩罚分数
+                    final_score = 0.1
+                    best_relation_type = "主观评价"
+                else:
+                    final_score = max_assoc_score
+            else:
+                final_score = max_assoc_score
+                
+        except Exception as e:
+            logger.debug(f"主观性检测失败: {e}")
+            final_score = max_assoc_score
+    else:
+        # 分数不够高，跳过主观性检测
+        final_score = max_assoc_score
+    
+    return float(final_score), best_sentence, best_relation_type
 
 @app.route('/sidebar.html', methods=['GET'])
 def sidebar():
@@ -155,56 +271,32 @@ def calculate_cohesion():
         if aggregation_method not in ['mean', 'median', 'variance']:
             return jsonify({'error': '聚合方法必须是 mean、median 或 variance'}), 400
         
-        # 加载模型
-        model = load_model()
+        # 加载 NLI 模型
+        load_model()
         
-        # 向量化：将类目词和所有普通词转换为向量
-        logger.info(f"正在向量化: 类目词='{category}', 普通词数量={len(items)}")
+        # 使用 NLI 模型计算相似度（多关系模板匹配）
+        logger.info(f"正在计算相似度: 类目词='{category}', 普通词数量={len(items)}")
         
-        # 准备所有文本（类目词 + 普通词）
-        all_texts = [category] + items
-        
-        # 批量编码，提高效率
-        embeddings = model.encode(all_texts, convert_to_numpy=True, show_progress_bar=False)
-        
-        category_embedding = embeddings[0]
-        item_embeddings = embeddings[1:]
-        
-        # 计算相似度：使用余弦相似度（1 - 余弦距离）
+        # 计算每个子词与类目词的关联度
         similarities = []
-        for item_embedding in item_embeddings:
-            # 计算余弦相似度（值域: -1 到 1，越接近1越相似）
-            # 使用 1 - cosine_distance 得到相似度
-            cosine_distance = cosine(category_embedding, item_embedding)
-            similarity = 1 - cosine_distance
-            similarities.append(float(similarity))
+        relation_types = []  # 存储每个子词的关联类型
+        for item in items:
+            similarity, _, relation_type = calculate_complex_association(category, item)
+            similarities.append(similarity)
+            relation_types.append(relation_type)
         
-        # 计算平均值
-        mean_score = float(np.mean(similarities))
+        if not similarities or len(similarities) == 0:
+            return jsonify({'error': '无法计算相似度，请检查输入文本'}), 400
         
-        # 计算方差（如果请求方差）
-        variance = None
-        if aggregation_method == 'variance':
-            variance = float(np.var(similarities))
-            cohesion_score = variance
-        elif aggregation_method == 'mean':
-            cohesion_score = mean_score
-        else:  # median
-            cohesion_score = float(np.median(similarities))
-        
-        logger.info(f"计算完成: 平均值={mean_score:.4f}, 方法={aggregation_method}")
+        logger.info(f"计算完成: 类目词='{category}', 子词数量={len(items)}")
         
         result = {
-            'cohesion_score': cohesion_score,
-            'mean_score': mean_score,
             'similarities': similarities,
-            'method': aggregation_method,
+            'relation_types': relation_types,  # 关联类型列表
             'category': category,
+            'items': items,  # 返回子词列表
             'items_count': len(items)
         }
-        
-        if variance is not None:
-            result['variance'] = variance
         
         return jsonify(result)
         
