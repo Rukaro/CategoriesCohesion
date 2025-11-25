@@ -1,29 +1,15 @@
 """
-飞书边栏插件后端服务
-使用 NLI 模型的多关系模板匹配计算类目内聚度指标
-支持分类、场景、构成、近义词、特征、状态等多种关系类型
+类目内聚度分析服务
+使用SentenceTransformer模型计算类目内聚度指标
+使用sentence-transformers和余弦相似度计算单词关联度
 """
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from transformers import pipeline
 import numpy as np
 import logging
 import os
-import nltk
-from nltk.corpus import wordnet as wn
-from nltk.tokenize import word_tokenize
-
-# 下载必要的NLTK数据
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-
-try:
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    nltk.download('wordnet', quiet=True)
+from sentence_transformers import SentenceTransformer, util
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -38,8 +24,7 @@ CORS(app)  # 允许跨域请求
 @app.after_request
 def after_request(response):
     """添加安全响应头"""
-    # 权限策略：允许必要的功能（解决浏览器扩展的权限策略错误）
-    # 注意：这个错误通常来自浏览器扩展，不影响插件功能
+    # 权限策略：允许必要的功能
     response.headers['Permissions-Policy'] = (
         'geolocation=*, '
         'microphone=*, '
@@ -52,182 +37,89 @@ def after_request(response):
         'clipboard-read=(self "*"), '
         'clipboard-write=(self "*")'
     )
-    # 内容安全策略（允许飞书 SDK 和必要的资源加载）
+    # 内容安全策略
     response.headers['Content-Security-Policy'] = (
         "default-src 'self' 'unsafe-inline' 'unsafe-eval' "
-        "https://lf1-cdn-tos.bytegoofy.com "
-        "https://*.feishu.cn "
-        "https://*.larkoffice.com "
         "data: blob:; "
         "frame-ancestors *;"
     )
     return response
 
-# 全局变量：NLI 模型
-classifier = None
+# 全局变量：SentenceTransformer模型
+model = None
 
 def load_model():
-    """加载 NLI 模型（Bart-Large-MNLI）"""
-    global classifier
-    if classifier is None:
-        logger.info("正在加载 NLI 模型...")
+    """加载SentenceTransformer模型"""
+    global model
+    if model is None:
+        logger.info("正在加载SentenceTransformer模型...")
         try:
             # 优先尝试从环境变量获取模型名称
-            model_name = os.getenv('NLI_MODEL_NAME', 'facebook/bart-large-mnli')
+            model_name = os.getenv('SENTENCE_MODEL_NAME', 'all-MiniLM-L6-v2')
             
             logger.info(f"使用模型: {model_name}")
-            classifier = pipeline(
-                "zero-shot-classification",
-                model=model_name,
-                device=-1  # -1 表示使用 CPU，如果有 GPU 可以改为 0
-            )
-            logger.info("NLI 模型加载成功")
+            logger.info("首次运行需要下载模型，可能需要几分钟...")
+            model = SentenceTransformer(model_name)
+            logger.info("SentenceTransformer模型加载成功")
             
         except Exception as e:
             logger.error(f"模型加载失败: {e}")
-            logger.error("请确保已安装 transformers 库，并且网络连接正常以下载模型")
+            logger.error("请确保已安装 sentence-transformers 库，并且网络连接正常以下载模型")
             raise
-    return classifier
+    return model
 
-def verify_synonym_with_wordnet(word1, word2):
+def get_association_score(word1, word2):
     """
-    使用WordNet验证两个词是否是同义词
+    计算两个单词的关联度分数
     
     Args:
-        word1: 第一个词
-        word2: 第二个词
+        word1: 第一个单词
+        word2: 第二个单词
     
     Returns:
-        bool: 如果是同义词返回True，否则返回False
+        float: 关联度分数（0到1之间，越接近1表示越相关）
     """
+    if model is None:
+        load_model()
+    
     try:
-        # 获取两个词的所有synset（同义词集）
-        synsets1 = wn.synsets(word1.lower())
-        synsets2 = wn.synsets(word2.lower())
+        # 生成向量
+        embedding1 = model.encode(word1, convert_to_tensor=True)
+        embedding2 = model.encode(word2, convert_to_tensor=True)
         
-        if not synsets1 or not synsets2:
-            return False
-        
-        # 检查是否有共同的synset
-        for syn1 in synsets1:
-            for syn2 in synsets2:
-                # 如果两个词在同一个synset中，它们是同义词
-                if syn1 == syn2:
-                    return True
-                # 检查是否是直接同义词（lemma名称相同）
-                if syn1.name().split('.')[0] == syn2.name().split('.')[0]:
-                    return True
-        
-        # 检查是否有相似的含义（通过路径相似度）
-        max_similarity = 0.0
-        for syn1 in synsets1:
-            for syn2 in synsets2:
-                try:
-                    # 计算路径相似度
-                    similarity = syn1.path_similarity(syn2)
-                    if similarity is not None:
-                        max_similarity = max(max_similarity, similarity)
-                except:
-                    continue
-        
-        # 如果路径相似度很高（>=0.8），认为是同义词
-        if max_similarity >= 0.8:
-            return True
-        
-        # 检查是否是直接的同义词关系（通过lemma）
-        lemmas1 = set()
-        lemmas2 = set()
-        for syn in synsets1:
-            lemmas1.update([lemma.name().lower() for lemma in syn.lemmas()])
-        for syn in synsets2:
-            lemmas2.update([lemma.name().lower() for lemma in syn.lemmas()])
-        
-        # 如果两个词的lemma有交集，认为是同义词
-        if lemmas1.intersection(lemmas2):
-            return True
-        
-        return False
+        # 计算余弦相似度
+        score = util.pytorch_cos_sim(embedding1, embedding2)
+        return score.item()
     except Exception as e:
-        logger.debug(f"WordNet验证失败: {e}")
-        return False
+        logger.error(f"计算关联度失败: {e}")
+        return 0.0
 
 def calculate_complex_association(category, item):
     """
-    使用 NLI 模型计算类目词和子词的关联度
-    两步验证机制：
-    1. 第一步：广撒网，先看有没有关系（高召回率）
-    2. 第二步：照妖镜，过滤主观评价
+    使用SentenceTransformer模型计算类目词和子词的关联度
+    使用余弦相似度计算两个单词的关联度分数
     
     Args:
         category: 类目词
         item: 子词
     
     Returns:
-        (最大相似度分数, 最佳匹配模板, 关联类型)
+        (相似度分数, 描述句子, 关联类型)
     """
-    if classifier is None:
+    if model is None:
         load_model()
     
-    # ======================================================
-    # 第一步：简单关联检测
-    # ======================================================
-    # 只使用一个模板："{} is associated with {}."
-    template = "{} is associated with {}."
-    
-    max_assoc_score = 0.0
-    best_sentence = ""
-    best_relation_type = "关联"
-    
-    # 双向测试：测试正向和反向
-    inputs = [(item, category), (category, item)]
-    
-    for subject, predicate in inputs:
-        try:
-            # 构造完整句子
-            sentence = template.replace('{}', subject, 1).replace('{}', predicate, 1)
-            
-            # 使用 true/false 检测关联性
-            res = classifier(sentence, ["true", "false"])
-            
-            if res and 'scores' in res and 'labels' in res:
-                score = res['scores'][0]
-                label = res['labels'][0]
-                
-                if label == "true" and score > max_assoc_score:
-                    max_assoc_score = score
-                    best_sentence = sentence
-                    best_relation_type = "关联"
-                    
-        except Exception as e:
-            logger.debug(f"关联检测失败: {e}")
-            continue
-    
-    # 直接返回第一步检测的分数
-    return float(max_assoc_score), best_sentence, best_relation_type
-
-@app.route('/sidebar.html', methods=['GET'])
-def sidebar():
-    """飞书插件入口页面"""
-    response = send_from_directory('.', 'sidebar.html')
-    # 允许在 iframe 中加载（飞书插件需要）
-    # 注意：X-Frame-Options 不支持 ALLOWALL，使用 Content-Security-Policy 的 frame-ancestors
-    return response
-
-@app.route('/styles.css', methods=['GET'])
-def styles():
-    """样式文件"""
-    response = send_from_directory('.', 'styles.css', mimetype='text/css')
-    # 允许跨域访问
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    return response
-
-@app.route('/sidebar.js', methods=['GET'])
-def sidebar_js():
-    """JavaScript 文件"""
-    response = send_from_directory('.', 'sidebar.js', mimetype='application/javascript')
-    # 允许跨域访问
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    return response
+    try:
+        # 计算关联度分数
+        score = get_association_score(category, item)
+        
+        logger.debug(f"SentenceTransformer相似度: {category} <-> {item} = {score:.4f}")
+        
+        return float(score), f"{category} is associated with {item}.", "关联"
+        
+    except Exception as e:
+        logger.error(f"计算关联度失败: {e}")
+        return 0.0, f"{category} is associated with {item}.", "未知"
 
 @app.route('/', methods=['GET'])
 def index():
