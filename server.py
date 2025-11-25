@@ -10,6 +10,20 @@ from transformers import pipeline
 import numpy as np
 import logging
 import os
+import nltk
+from nltk.corpus import wordnet as wn
+from nltk.tokenize import word_tokenize
+
+# 下载必要的NLTK数据
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    nltk.download('wordnet', quiet=True)
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -75,6 +89,68 @@ def load_model():
             raise
     return classifier
 
+def verify_synonym_with_wordnet(word1, word2):
+    """
+    使用WordNet验证两个词是否是同义词
+    
+    Args:
+        word1: 第一个词
+        word2: 第二个词
+    
+    Returns:
+        bool: 如果是同义词返回True，否则返回False
+    """
+    try:
+        # 获取两个词的所有synset（同义词集）
+        synsets1 = wn.synsets(word1.lower())
+        synsets2 = wn.synsets(word2.lower())
+        
+        if not synsets1 or not synsets2:
+            return False
+        
+        # 检查是否有共同的synset
+        for syn1 in synsets1:
+            for syn2 in synsets2:
+                # 如果两个词在同一个synset中，它们是同义词
+                if syn1 == syn2:
+                    return True
+                # 检查是否是直接同义词（lemma名称相同）
+                if syn1.name().split('.')[0] == syn2.name().split('.')[0]:
+                    return True
+        
+        # 检查是否有相似的含义（通过路径相似度）
+        max_similarity = 0.0
+        for syn1 in synsets1:
+            for syn2 in synsets2:
+                try:
+                    # 计算路径相似度
+                    similarity = syn1.path_similarity(syn2)
+                    if similarity is not None:
+                        max_similarity = max(max_similarity, similarity)
+                except:
+                    continue
+        
+        # 如果路径相似度很高（>=0.8），认为是同义词
+        if max_similarity >= 0.8:
+            return True
+        
+        # 检查是否是直接的同义词关系（通过lemma）
+        lemmas1 = set()
+        lemmas2 = set()
+        for syn in synsets1:
+            lemmas1.update([lemma.name().lower() for lemma in syn.lemmas()])
+        for syn in synsets2:
+            lemmas2.update([lemma.name().lower() for lemma in syn.lemmas()])
+        
+        # 如果两个词的lemma有交集，认为是同义词
+        if lemmas1.intersection(lemmas2):
+            return True
+        
+        return False
+    except Exception as e:
+        logger.debug(f"WordNet验证失败: {e}")
+        return False
+
 def calculate_complex_association(category, item):
     """
     使用 NLI 模型计算类目词和子词的关联度
@@ -93,123 +169,41 @@ def calculate_complex_association(category, item):
         load_model()
     
     # ======================================================
-    # 第一步：快速检测关系（优化版）
+    # 第一步：简单关联检测
     # ======================================================
-    # 使用最精简的模板，减少计算时间
-    association_templates = [
-        ("{} is a type of {}.", "分类"),
-        ("{} is physically {}.", "特征"),
-        ("{} can be described as {}.", "状态"),
-    ]
+    # 只使用一个模板："{} is associated with {}."
+    template = "{} is associated with {}."
     
     max_assoc_score = 0.0
     best_sentence = ""
-    best_relation_type = "未知"
-    early_exit_threshold = 0.95  # 只有非常高的分数才提前退出
+    best_relation_type = "关联"
     
-    # 双向测试：先测试正向，如果分数不高再测试反向
+    # 双向测试：测试正向和反向
     inputs = [(item, category), (category, item)]
     
     for subject, predicate in inputs:
-        for template_info in association_templates:
-            template, relation_type = template_info
-            try:
-                # 构造完整句子
-                placeholder_count = template.count('{}')
-                
-                if placeholder_count == 2:
-                    sentence = template.replace('{}', subject, 1).replace('{}', predicate, 1)
-                elif placeholder_count == 1:
-                    sentence = template.replace('{}', subject, 1)
-                else:
-                    continue
-                
-                # 快速检测：使用 true/false
-                res = classifier(sentence, ["true", "false"])
-                
-                if res and 'scores' in res and 'labels' in res:
-                    score = res['scores'][0]
-                    label = res['labels'][0]
-                    
-                    if label == "true" and score > max_assoc_score:
-                        max_assoc_score = score
-                        best_sentence = sentence
-                        best_relation_type = relation_type
-                        
-                        # 早期退出：只有分数非常高时才提前退出
-                        if max_assoc_score >= early_exit_threshold:
-                            break
-                        
-            except Exception as e:
-                logger.debug(f"模板计算失败 ({template}): {e}")
-                continue
-        
-        # 如果已经找到非常高的分数，跳出输入循环
-        if max_assoc_score >= early_exit_threshold:
-            break
-    
-    # ======================================================
-    # 第二步：主观性过滤（增强版）
-    # ======================================================
-    # 降低阈值，让更多情况进入主观性检测（包括低分情况）
-    # 这样可以捕获像 "Lovely" 这样的主观评价词
-    subjectivity_threshold = 0.3  # 从 0.7 降低到 0.3
-    
-    if max_assoc_score >= subjectivity_threshold:
         try:
-            # 使用多个句子来检测主观性，提高准确性
-            test_sentences = [
-                best_sentence,  # 原始句子
-                f"{item} is {category}.",  # 直接描述
-                f"{category} is {item}.",  # 反向描述
-            ]
+            # 构造完整句子
+            sentence = template.replace('{}', subject, 1).replace('{}', predicate, 1)
             
-            max_opinion_score = 0.0
-            max_fact_score = 0.0
+            # 使用 true/false 检测关联性
+            res = classifier(sentence, ["true", "false"])
             
-            for test_sentence in test_sentences:
-                try:
-                    labels = ["objective physical fact", "subjective personal opinion"]
-                    res = classifier(test_sentence, labels)
-                    
-                    if res and 'scores' in res and 'labels' in res:
-                        fact_score = res['scores'][res['labels'].index("objective physical fact")]
-                        opinion_score = res['scores'][res['labels'].index("subjective personal opinion")]
-                        
-                        max_opinion_score = max(max_opinion_score, opinion_score)
-                        max_fact_score = max(max_fact_score, fact_score)
-                except Exception as e:
-                    logger.debug(f"主观性检测句子失败 ({test_sentence}): {e}")
-                    continue
-            
-            # 如果主观评价分数明显高于客观事实分数，判定为主观评价
-            # 使用更严格的判断：主观分数 > 客观分数 + 0.1
-            is_subjective = max_opinion_score > max_fact_score + 0.1
-            
-            logger.debug(f"主观性检测: 事实分={max_fact_score:.4f}, 观点分={max_opinion_score:.4f}, 是否主观={is_subjective}")
-            
-            if is_subjective:
-                # 严重惩罚主观评价分数
-                final_score = 0.05  # 从 0.1 降低到 0.05
-                best_relation_type = "主观评价"
-            else:
-                # 即使不是明显主观，如果观点分较高，也要适度降低分数
-                if max_opinion_score > 0.4:
-                    # 按观点分比例降低
-                    penalty = max_opinion_score * 0.5
-                    final_score = max(0.1, max_assoc_score - penalty)
-                    logger.debug(f"适度惩罚: 原分={max_assoc_score:.4f}, 惩罚={penalty:.4f}, 最终分={final_score:.4f}")
-                else:
-                    final_score = max_assoc_score
+            if res and 'scores' in res and 'labels' in res:
+                score = res['scores'][0]
+                label = res['labels'][0]
+                
+                if label == "true" and score > max_assoc_score:
+                    max_assoc_score = score
+                    best_sentence = sentence
+                    best_relation_type = "关联"
                     
         except Exception as e:
-            logger.debug(f"主观性检测失败: {e}")
-            final_score = max_assoc_score
-    else:
-        # 分数太低，可能是无关联，直接返回低分
-        final_score = max_assoc_score
+            logger.debug(f"关联检测失败: {e}")
+            continue
     
-    return float(final_score), best_sentence, best_relation_type
+    # 直接返回第一步检测的分数
+    return float(max_assoc_score), best_sentence, best_relation_type
 
 @app.route('/sidebar.html', methods=['GET'])
 def sidebar():
