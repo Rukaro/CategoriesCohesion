@@ -377,7 +377,6 @@
                     <tr>
                         <th>类目词</th>
                         <th>子词</th>
-                        <th>关联类型</th>
                         <th>详情</th>
                     </tr>
                 </thead>
@@ -537,14 +536,6 @@
                 itemsTd.textContent = row.items.join(', ');
                 tr.appendChild(itemsTd);
                 
-                // 关联类型列
-                const relationTypeTd = document.createElement('td');
-                relationTypeTd.className = 'relation-type-col';
-                relationTypeTd.textContent = row.relationType || '未知';
-                relationTypeTd.style.fontWeight = '600';
-                relationTypeTd.style.color = '#667eea';
-                tr.appendChild(relationTypeTd);
-                
                 // 详情列（显示所有关联度，用;分割）
                 const detailsTd = document.createElement('td');
                 detailsTd.className = 'details-col';
@@ -567,14 +558,13 @@
             }
 
             try {
-                // 生成表格文本（仅包含关联类型和详情，用制表符分隔，方便粘贴到Excel等）
+                // 生成表格文本（仅包含详情，用制表符分隔，方便粘贴到Excel等）
                 let tableText = '';
                 
                 allResultsData.forEach(row => {
-                    const relationType = row.relationType || '未知';
                     // 获取所有关联度，用;分割
                     const details = row.similarities.map(s => s.toFixed(4)).join(';');
-                    tableText += `${relationType}\t${details}\n`;
+                    tableText += `${details}\n`;
                 });
                 
                 // 移除最后一行的换行符

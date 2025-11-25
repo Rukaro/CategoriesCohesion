@@ -149,34 +149,64 @@ def calculate_complex_association(category, item):
             break
     
     # ======================================================
-    # 第二步：主观性过滤（仅在分数较高时执行）
+    # 第二步：主观性过滤（增强版）
     # ======================================================
-    # 只在分数 >= 0.7 时才进行主观性检测，避免不必要的计算
-    if max_assoc_score >= 0.7:
+    # 降低阈值，让更多情况进入主观性检测（包括低分情况）
+    # 这样可以捕获像 "Lovely" 这样的主观评价词
+    subjectivity_threshold = 0.3  # 从 0.7 降低到 0.3
+    
+    if max_assoc_score >= subjectivity_threshold:
         try:
-            labels = ["objective physical fact", "subjective personal opinion"]
-            res = classifier(best_sentence, labels)
+            # 使用多个句子来检测主观性，提高准确性
+            test_sentences = [
+                best_sentence,  # 原始句子
+                f"{item} is {category}.",  # 直接描述
+                f"{category} is {item}.",  # 反向描述
+            ]
             
-            if res and 'scores' in res and 'labels' in res:
-                fact_score = res['scores'][res['labels'].index("objective physical fact")]
-                opinion_score = res['scores'][res['labels'].index("subjective personal opinion")]
-                
-                is_subjective = opinion_score > fact_score
-                
-                if is_subjective:
-                    # 惩罚分数
-                    final_score = 0.1
-                    best_relation_type = "主观评价"
+            max_opinion_score = 0.0
+            max_fact_score = 0.0
+            
+            for test_sentence in test_sentences:
+                try:
+                    labels = ["objective physical fact", "subjective personal opinion"]
+                    res = classifier(test_sentence, labels)
+                    
+                    if res and 'scores' in res and 'labels' in res:
+                        fact_score = res['scores'][res['labels'].index("objective physical fact")]
+                        opinion_score = res['scores'][res['labels'].index("subjective personal opinion")]
+                        
+                        max_opinion_score = max(max_opinion_score, opinion_score)
+                        max_fact_score = max(max_fact_score, fact_score)
+                except Exception as e:
+                    logger.debug(f"主观性检测句子失败 ({test_sentence}): {e}")
+                    continue
+            
+            # 如果主观评价分数明显高于客观事实分数，判定为主观评价
+            # 使用更严格的判断：主观分数 > 客观分数 + 0.1
+            is_subjective = max_opinion_score > max_fact_score + 0.1
+            
+            logger.debug(f"主观性检测: 事实分={max_fact_score:.4f}, 观点分={max_opinion_score:.4f}, 是否主观={is_subjective}")
+            
+            if is_subjective:
+                # 严重惩罚主观评价分数
+                final_score = 0.05  # 从 0.1 降低到 0.05
+                best_relation_type = "主观评价"
+            else:
+                # 即使不是明显主观，如果观点分较高，也要适度降低分数
+                if max_opinion_score > 0.4:
+                    # 按观点分比例降低
+                    penalty = max_opinion_score * 0.5
+                    final_score = max(0.1, max_assoc_score - penalty)
+                    logger.debug(f"适度惩罚: 原分={max_assoc_score:.4f}, 惩罚={penalty:.4f}, 最终分={final_score:.4f}")
                 else:
                     final_score = max_assoc_score
-            else:
-                final_score = max_assoc_score
-                
+                    
         except Exception as e:
             logger.debug(f"主观性检测失败: {e}")
             final_score = max_assoc_score
     else:
-        # 分数不够高，跳过主观性检测
+        # 分数太低，可能是无关联，直接返回低分
         final_score = max_assoc_score
     
     return float(final_score), best_sentence, best_relation_type
